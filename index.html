@@ -154,8 +154,8 @@
 
     .section-content { display: none; padding: 15px; border: 1px solid #ddd; border-radius: 20px; background-color: #f9f9f9; margin-bottom: 15px; }
     .section-content.active { display: block; }
-    .sub-section-header { background-color: rgba(92, 107, 192, 0.6); margin-top: 20px; }
-    .sub-section-header:hover { background-color: rgba(63, 81, 181, 0.75); }
+    .sub-section-header { background-color: #ff9800; margin-top: 20px; }
+    .sub-section-header:hover { background-color: #fb8c00; } /* สีส้มที่เข้มขึ้นเล็กน้อยสำหรับ hover */
     .sub-section-content { border: none; background-color: transparent; padding: 10px 0 0 0; margin-bottom: 0; }
     .entry-form, #user-form { display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 15px; margin-bottom: 15px; }
     .entry-group, .form-group { display: flex; flex-direction: column; gap: 5px;}
@@ -364,7 +364,7 @@
                   <input list="typeList" id="type" required placeholder="เลือกหรือพิมพ์ประเภท" style="height: 40px;" onfocus="App.showAllTypes(this)" onblur="App.restoreType(this)">
                   <datalist id="typeList"></datalist>
                   
-                  <div class="sub-section-header admin-only" onclick="App.toggleSection('manage-types-submenu')" style="margin-top:10px;">
+                  <div class="sub-section-header admin-only" onclick="App.toggleSection('manage-types-submenu')" style="margin-top:10px; color: white;">
                     <span>จัดการประเภท</span>
                     <span class="arrow">▶</span>
                   </div>
@@ -382,7 +382,7 @@
                 </div>
                 
                 <div class="entry-group admin-only" id="multiAccountSelector" style="display: none; margin-top: 10px;">
-                    <div class="sub-section-header" onclick="App.toggleSection('multi-account-submenu')">
+                    <div class="sub-section-header" onclick="App.toggleSection('multi-account-submenu')" style="color: white;">
                         <span>เพิ่มรายการนี้ในบัญชีอื่นด้วย</span>
                         <span class="arrow">▶</span>
                     </div>
@@ -406,7 +406,7 @@
                   <button onclick="App.toggleRecordsVisibility()" style="flex: 1; background-color: #607d8b;">แสดง/ซ่อนรายการ</button>
                 </div>
                 
-                <div class="sub-section-header" onclick="App.toggleSection('backup-password-submenu')" style="background-color:#4A148C; color: white;">
+                <div class="sub-section-header" onclick="App.toggleSection('backup-password-submenu')" style="background-color:#ff9800; color: white;">
                   <span>ตั้งรหัสผ่านไฟล์สำรอง</span>
                   <span class="arrow">▶</span>
                 </div>
