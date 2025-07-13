@@ -176,12 +176,20 @@
     .table-container { overflow-x: auto; border: 1px solid var(--border-color); border-radius: 5px; margin-top: 10px; }
     table { width: 100%; border-collapse: collapse; margin: 10px auto; }
     th, td { border: 1px solid #ccc; padding: 8px; text-align: center; word-break: break-word; vertical-align: middle; }
-    #recordTable td { line-height: 1.5; }
+    #recordTable td { line-height: 1.0; }
     th { background-color: #f4f4f4; }
     #recordTable tr:nth-child(even) { background-color: #f9f9f9; }
     #recordTable tr:hover { background-color: #f1f1f1; }
     .summaryResult { font-size: clamp(12px, 2.2vw, 15px); font-weight: normal; color: blue; background-color: #FAFAD2; border: 3px solid #4CAF50; border-radius: 5px; padding: 5px; width: 100%; margin: 0; text-align: center; box-shadow: 0 4px 12px rgba(0,0,0,0.25); }
-    .summaryResult table td, .summaryResult table th { line-height: 1.5; }
+    
+    /* === ADDED/MODIFIED FOR POPUP SPACING === */
+    .summaryResult p {
+        line-height: 1.0;
+        margin-top: 5px;
+        margin-bottom: 5px;
+    }
+    
+    .summaryResult table td, .summaryResult table th { line-height: 1.0; }
     .file-actions { display: flex; gap: 10px; align-items: center; }
     .action-button { padding: 10px 20px; height: 40px; min-width: 150px; border: none; border-radius: 20px; color: white; cursor: pointer; font-size: 14px; display: flex; align-items: center; justify-content: center; }
     .file-button-wrapper button { background-color: #007bff; }
@@ -652,7 +660,7 @@ const App = {
         this.checkLoginState();
     },
 
-    // --- PASSWORD HASHING & MIGRATION (NEW & UPDATED) ---
+    // --- PASSWORD HASHING & MIGRATION ---
     async hashPassword(password) {
         const salt = window.crypto.getRandomValues(new Uint8Array(16));
         const enc = new TextEncoder();
@@ -685,7 +693,6 @@ const App = {
         sessionStorage.removeItem('accCurrentUser');
         localStorage.removeItem('accCurrentUser');
 
-        // Store only non-sensitive info for session/remember-me
         const userToStore = { id: user.id, username: user.username, role: user.role };
 
         if (rememberMe) {
@@ -698,7 +705,7 @@ const App = {
         document.getElementById('login-error').textContent = '';
     },
     
-    // --- LOGIN & AUTHENTICATION (UPDATED) ---
+    // --- LOGIN & AUTHENTICATION ---
     loadData() {
         const data = localStorage.getItem('accountData');
         if (data) {
@@ -717,7 +724,6 @@ const App = {
         
         let adminUser = this.data.users.find(u => u.username === 'admin');
         if (!adminUser) {
-            // The default admin password is plain text. It will be hashed automatically upon first login.
             adminUser = { id: Date.now(), username: 'admin', password: '123', role: 'admin', assignedAccounts: [] };
             this.data.users.push(adminUser);
         } else {
@@ -738,7 +744,6 @@ const App = {
     saveData(showToast = true) {
         const dataToSave = { ...this.data, accountTypes: Array.from(this.data.accountTypes.entries()) };
         try {
-            // Sanitize user data before saving to remove any raw password properties that might linger
             const sanitizedUsers = dataToSave.users.map(u => {
                 const { password, ...userWithoutPassword } = u;
                 return userWithoutPassword;
@@ -759,7 +764,6 @@ const App = {
         const rememberedUserJson = localStorage.getItem('accCurrentUser');
         if (rememberedUserJson) {
             const rememberedUser = JSON.parse(rememberedUserJson);
-            // Find the full user object from our main data store
             const fullUser = this.data.users.find(u => u.id === rememberedUser.id);
             if (fullUser) {
                 this.currentUser = fullUser;
@@ -783,7 +787,7 @@ const App = {
         }
     },
 
-    async login(username, password) { // Made async
+    async login(username, password) {
         document.getElementById('login-error').textContent = '';
         const user = this.data.users.find(u => u.username === username);
 
@@ -792,7 +796,6 @@ const App = {
             return;
         }
 
-        // Case 1: User has a hashed password (new system)
         if (user.passwordHash && user.salt) {
             const isCorrect = await this.verifyPassword(password, user.salt, user.passwordHash);
             if (isCorrect) {
@@ -801,22 +804,19 @@ const App = {
                 document.getElementById('login-error').textContent = 'ชื่อผู้ใช้หรือรหัสผ่านไม่ถูกต้อง';
             }
         }
-        // Case 2: User has a plain text password (old system, needs migration)
         else if (user.password && user.password === password) {
             console.log(`Migrating password for user: ${username}`);
             this.showToast(`กำลังอัปเกรดความปลอดภัยบัญชีของคุณ...`, 'warning');
             
-            // Hash the password and update the user object
             const hashedPassword = await this.hashPassword(password);
             user.passwordHash = hashedPassword.hash;
             user.salt = hashedPassword.salt;
-            delete user.password; // Delete the old plain text password
+            delete user.password;
             
-            this.saveData(false); // Save the updated user data immediately
+            this.saveData(false);
             this.handleSuccessfulLogin(user);
 
         } 
-        // Case 3: Incorrect password or invalid user object
         else {
             document.getElementById('login-error').textContent = 'ชื่อผู้ใช้หรือรหัสผ่านไม่ถูกต้อง';
         }
@@ -862,7 +862,7 @@ const App = {
         this.toggleSection('account-section');
     },
     
-    // --- USER MANAGEMENT & PERMISSIONS (UPDATED) ---
+    // --- USER MANAGEMENT & PERMISSIONS ---
     renderUserTable() {
         const tbody = document.querySelector('#user-table tbody');
         if (!tbody) return;
@@ -920,7 +920,7 @@ const App = {
         this.renderUserAccountAssignment(user ? user.assignedAccounts : []);
     },
 
-    async saveUser(e) { // Made async
+    async saveUser(e) {
         e.preventDefault();
         const id = document.getElementById('user-id').value;
         const username = document.getElementById('user-username').value.trim();
@@ -956,7 +956,7 @@ const App = {
                 const hashedPassword = await this.hashPassword(password);
                 user.passwordHash = hashedPassword.hash;
                 user.salt = hashedPassword.salt;
-                delete user.password; // Ensure old property is removed
+                delete user.password;
             }
             this.showToast('แก้ไขข้อมูลผู้ใช้สำเร็จ');
 
@@ -1007,7 +1007,7 @@ const App = {
         }
     },
 
-    // --- CRYPTO & PASSWORD FUNCTIONS (UNCHANGED from previous version) ---
+    // --- CRYPTO & FILE PASSWORD FUNCTIONS ---
     arrayBufferToBase64(buffer) { let binary = ''; const bytes = new Uint8Array(buffer); const len = bytes.byteLength; for (let i = 0; i < len; i++) { binary += String.fromCharCode(bytes[i]); } return window.btoa(binary); },
     base64ToArrayBuffer(base64) { const binary_string = window.atob(base64); const len = binary_string.length; const bytes = new Uint8Array(len); for (let i = 0; i < len; i++) { bytes[i] = binary_string.charCodeAt(i); } return bytes.buffer; },
     async deriveKey(password, salt) { const enc = new TextEncoder(); const keyMaterial = await window.crypto.subtle.importKey('raw', enc.encode(password), { name: 'PBKDF2' }, false, ['deriveKey']); return window.crypto.subtle.deriveKey({ "name": 'PBKDF2', salt: salt, "iterations": 100000, "hash": 'SHA-256' }, keyMaterial, { "name": 'AES-GCM', "length": 256 }, true, [ "encrypt", "decrypt" ] ); },
@@ -1044,7 +1044,7 @@ const App = {
         }
     },
 
-    // --- CORE APP FUNCTIONS (Unchanged from here downwards) ---
+    // --- CORE APP FUNCTIONS ---
     showToast(message, type = 'success') {
         const toast = document.getElementById('toast');
         toast.textContent = message;
@@ -1309,7 +1309,6 @@ const App = {
 
                     if (finalDataToMerge.users && Array.isArray(finalDataToMerge.users)) { 
                         if(confirm("ไฟล์นี้เป็นไฟล์สำรองข้อมูล JSON ทั้งหมด ต้องการโหลดข้อมูลทั้งหมดทับของเดิมหรือไม่? (ข้อมูลปัจจุบันจะหายไป)")) {
-                            // Reset state and load new data
                             this.data.users = finalDataToMerge.users || [];
                             this.data.backupPassword = finalDataToMerge.backupPassword || null;
                             this.data.accounts = finalDataToMerge.accounts || [];
@@ -1317,9 +1316,9 @@ const App = {
                             this.data.accountTypes = new Map(finalDataToMerge.accountTypes || []);
                             this.data.currentAccount = finalDataToMerge.currentAccount || (this.data.accounts.length > 0 ? this.data.accounts[0] : null);
                             
-                            this.saveData(false); // save the new state
+                            this.saveData(false);
                             alert("โหลดข้อมูลทั้งหมดจาก JSON สำเร็จ! กรุณาเข้าสู่ระบบอีกครั้ง");
-                            this.logout(); // Force re-login to ensure user state is correct
+                            this.logout();
                         }
                     } else if (finalDataToMerge.accountName) { 
                         const confirmMsg = `ไฟล์นี้เป็นข้อมูลของบัญชี "${finalDataToMerge.accountName}"\n\nกด OK เพื่อ "แทนที่" ข้อมูลทั้งหมดของบัญชีนี้\nกด Cancel เพื่อยกเลิก`;
