@@ -691,17 +691,31 @@ const App = {
             }
         }
         
-        let adminUser = this.data.users.find(u => u.username === 'admin');
-        if (!adminUser) {
-            adminUser = { id: Date.now(), username: 'admin', password: '123', role: 'admin', assignedAccounts: [] };
-            this.data.users.push(adminUser);
-        } else {
-            if (!adminUser.role) adminUser.role = 'admin';
+        // ---- MODIFIED START: Find and flag the primary admin ----
+        // Find primary admin by flag first, then by the classic name 'admin' for migration
+        let primaryAdmin = this.data.users.find(u => u.isPrimaryAdmin === true);
+        if (!primaryAdmin) {
+            primaryAdmin = this.data.users.find(u => u.username === 'admin');
         }
+
+        if (!primaryAdmin) {
+            // Fresh setup, create the primary admin
+            primaryAdmin = { id: Date.now(), username: 'admin', password: '123', role: 'admin', assignedAccounts: [], isPrimaryAdmin: true };
+            this.data.users.push(primaryAdmin);
+        } else {
+            // Existing setup, ensure flag is set for migration and role is correct
+            primaryAdmin.isPrimaryAdmin = true;
+            if (!primaryAdmin.role) primaryAdmin.role = 'admin';
+        }
+        // ---- MODIFIED END ----
         
         this.data.users.forEach(user => {
             if (!user.assignedAccounts) {
                 user.assignedAccounts = [];
+            }
+            // Ensure non-primary users don't have the flag
+            if(user.isPrimaryAdmin === undefined) {
+                 user.isPrimaryAdmin = (user.id === primaryAdmin.id);
             }
         });
 
@@ -713,6 +727,8 @@ const App = {
     saveData(showToast = true) {
         const dataToSave = { ...this.data, accountTypes: Array.from(this.data.accountTypes.entries()) };
         try {
+            // When saving, we don't need to sanitize the `isPrimaryAdmin` flag
+            // But we still sanitize the password for security in localStorage
             const sanitizedUsers = dataToSave.users.map(u => {
                 const { password, ...userWithoutPassword } = u;
                 return userWithoutPassword;
@@ -839,14 +855,16 @@ const App = {
         this.data.users.forEach(u => {
             const assignedText = u.assignedAccounts && u.assignedAccounts.length > 0 ? u.assignedAccounts.join(', ') : 'ยังไม่ได้กำหนด';
             const tr = document.createElement('tr');
+            // ---- MODIFIED START: Use isPrimaryAdmin flag to show/hide delete button ----
             tr.innerHTML = `
-                <td>${u.username}</td>
+                <td>${u.username} ${u.isPrimaryAdmin ? '(หลัก)' : ''}</td>
                 <td>${u.role || 'user'}</td>
                 <td style="white-space: normal;">${assignedText}</td>
                 <td>
                     <button class="edit-user-btn" data-id="${u.id}" style="background-color: var(--warning-color); padding: 5px 10px; border-radius: 10px; font-size: 14px;">แก้ไข</button>
-                    ${u.role !== 'admin' ? `<button class="delete-user-btn" data-id="${u.id}" style="background-color: var(--danger-color); padding: 5px 10px; border-radius: 10px; font-size: 14px;">ลบ</button>` : ''}
+                    ${!u.isPrimaryAdmin ? `<button class="delete-user-btn" data-id="${u.id}" style="background-color: var(--danger-color); padding: 5px 10px; border-radius: 10px; font-size: 14px;">ลบ</button>` : ''}
                 </td>`;
+            // ---- MODIFIED END ----
             tbody.appendChild(tr);
         });
     },
@@ -908,15 +926,23 @@ const App = {
 
         const assignedAccounts = Array.from(document.querySelectorAll('#user-account-assignment input:checked')).map(cb => cb.value);
 
+        // ---- MODIFIED START: Reworked editing and adding logic ----
         if (id) { // Editing
             const user = this.data.users.find(u => u.id == id);
             if (!user) { this.showToast('ไม่พบผู้ใช้', 'error'); return; }
 
-            if (user.username !== username && this.data.users.some(u => u.username === username)) {
-                this.showToast('ชื่อผู้ใช้นี้มีอยู่แล้ว', 'error');
+            // Check if the new username is already taken by another user
+            if (this.data.users.some(u => u.username === username && u.id != id)) {
+                this.showToast('ชื่อผู้ใช้นี้มีผู้ใช้อื่นใช้งานอยู่แล้ว', 'error');
                 return;
             }
             
+            // Prevent demoting the primary admin
+            if (user.isPrimaryAdmin && role !== 'admin') {
+                this.showToast('ไม่สามารถเปลี่ยนประเภทของ "admin" หลักได้ ต้องเป็น Admin เท่านั้น', 'error');
+                return;
+            }
+
             user.username = username;
             user.role = role;
             user.assignedAccounts = assignedAccounts;
@@ -943,11 +969,13 @@ const App = {
                 passwordHash: hashedPassword.hash, 
                 salt: hashedPassword.salt,
                 role, 
-                assignedAccounts 
+                assignedAccounts,
+                isPrimaryAdmin: false // Ensure new users are never primary admins
             };
             this.data.users.push(newUser);
             this.showToast('เพิ่มผู้ใช้ใหม่สำเร็จ');
         }
+        // ---- MODIFIED END ----
 
         this.saveData();
         this.renderUserTable();
@@ -964,10 +992,12 @@ const App = {
     deleteUser(id) {
         const user = this.data.users.find(u => u.id == id);
         if (!user) return;
-        if (user.role === 'admin') {
-            this.showToast('ไม่สามารถลบผู้ใช้ประเภท Admin ได้', 'error');
+        // ---- MODIFIED START: Check isPrimaryAdmin flag instead of username ----
+        if (user.isPrimaryAdmin) {
+            this.showToast('ไม่สามารถลบผู้ใช้ "admin" หลักของระบบได้', 'error');
             return;
         }
+        // ---- MODIFIED END ----
         if (confirm(`คุณแน่ใจหรือไม่ว่าต้องการลบผู้ใช้ "${user.username}"?`)) {
             this.data.users = this.data.users.filter(u => u.id != id);
             this.saveData();
