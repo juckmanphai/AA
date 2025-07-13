@@ -651,30 +651,79 @@ const App = {
         this.attachEventListeners();
         this.checkLoginState();
     },
+
+    // --- PASSWORD HASHING & MIGRATION (NEW & UPDATED) ---
+    async hashPassword(password) {
+        const salt = window.crypto.getRandomValues(new Uint8Array(16));
+        const enc = new TextEncoder();
+        const keyMaterial = await window.crypto.subtle.importKey('raw', enc.encode(password), { name: 'PBKDF2' }, false, ['deriveKey']);
+        const key = await window.crypto.subtle.deriveKey({ "name": 'PBKDF2', salt: salt, "iterations": 100000, "hash": 'SHA-256' }, keyMaterial, { "name": 'AES-GCM', "length": 256 }, true, ["encrypt", "decrypt"]);
+        const exportedKey = await window.crypto.subtle.exportKey('raw', key);
+        const hash = this.arrayBufferToBase64(exportedKey);
+        return { salt: this.arrayBufferToBase64(salt), hash: hash };
+    },
+
+    async verifyPassword(password, saltBase64, hashBase64) {
+        try {
+            const salt = this.base64ToArrayBuffer(saltBase64);
+            const enc = new TextEncoder();
+            const keyMaterial = await window.crypto.subtle.importKey('raw', enc.encode(password), { name: 'PBKDF2' }, false, ['deriveKey']);
+            const key = await window.crypto.subtle.deriveKey({ "name": 'PBKDF2', salt: salt, "iterations": 100000, "hash": 'SHA-256' }, keyMaterial, { "name": 'AES-GCM', "length": 256 }, true, ["encrypt", "decrypt"]);
+            const exportedKey = await window.crypto.subtle.exportKey('raw', key);
+            const newHash = this.arrayBufferToBase64(exportedKey);
+            return newHash === hashBase64;
+        } catch (error) {
+            console.error("Password verification failed:", error);
+            return false;
+        }
+    },
+
+    handleSuccessfulLogin(user) {
+        this.currentUser = user;
+        const rememberMe = document.getElementById('remember-me').checked;
+
+        sessionStorage.removeItem('accCurrentUser');
+        localStorage.removeItem('accCurrentUser');
+
+        // Store only non-sensitive info for session/remember-me
+        const userToStore = { id: user.id, username: user.username, role: user.role };
+
+        if (rememberMe) {
+            localStorage.setItem('accCurrentUser', JSON.stringify(userToStore));
+        } else {
+            sessionStorage.setItem('accCurrentUser', JSON.stringify(userToStore));
+        }
+
+        this.showMainApp();
+        document.getElementById('login-error').textContent = '';
+    },
     
-    // --- LOGIN & AUTHENTICATION ---
+    // --- LOGIN & AUTHENTICATION (UPDATED) ---
     loadData() {
         const data = localStorage.getItem('accountData');
         if (data) {
-            const parsed = JSON.parse(data);
-            this.data.users = parsed.users || [];
-            this.data.backupPassword = parsed.backupPassword || null;
-            this.data.accounts = parsed.accounts || [];
-            this.data.currentAccount = parsed.currentAccount || null;
-            this.data.records = parsed.records || [];
-            this.data.accountTypes = new Map(parsed.accountTypes || []);
+            try {
+                const parsed = JSON.parse(data);
+                this.data.users = parsed.users || [];
+                this.data.backupPassword = parsed.backupPassword || null;
+                this.data.accounts = parsed.accounts || [];
+                this.data.currentAccount = parsed.currentAccount || null;
+                this.data.records = parsed.records || [];
+                this.data.accountTypes = new Map(parsed.accountTypes || []);
+            } catch (e) {
+                console.error("Failed to parse accountData from localStorage", e);
+            }
         }
         
-        // Ensure default admin exists and has correct structure
         let adminUser = this.data.users.find(u => u.username === 'admin');
         if (!adminUser) {
+            // The default admin password is plain text. It will be hashed automatically upon first login.
             adminUser = { id: Date.now(), username: 'admin', password: '123', role: 'admin', assignedAccounts: [] };
             this.data.users.push(adminUser);
         } else {
             if (!adminUser.role) adminUser.role = 'admin';
         }
         
-        // Ensure all users have the assignedAccounts property
         this.data.users.forEach(user => {
             if (!user.assignedAccounts) {
                 user.assignedAccounts = [];
@@ -689,6 +738,13 @@ const App = {
     saveData(showToast = true) {
         const dataToSave = { ...this.data, accountTypes: Array.from(this.data.accountTypes.entries()) };
         try {
+            // Sanitize user data before saving to remove any raw password properties that might linger
+            const sanitizedUsers = dataToSave.users.map(u => {
+                const { password, ...userWithoutPassword } = u;
+                return userWithoutPassword;
+            });
+            dataToSave.users = sanitizedUsers;
+
             localStorage.setItem('accountData', JSON.stringify(dataToSave));
             if (showToast) {
                 this.showToast('✓ บันทึกข้อมูลชั่วคราวในเบราว์เซอร์แล้ว');
@@ -703,8 +759,10 @@ const App = {
         const rememberedUserJson = localStorage.getItem('accCurrentUser');
         if (rememberedUserJson) {
             const rememberedUser = JSON.parse(rememberedUserJson);
-            this.currentUser = this.data.users.find(u => u.id === rememberedUser.id);
-            if (this.currentUser) {
+            // Find the full user object from our main data store
+            const fullUser = this.data.users.find(u => u.id === rememberedUser.id);
+            if (fullUser) {
+                this.currentUser = fullUser;
                 this.showMainApp();
                 return;
             }
@@ -713,8 +771,9 @@ const App = {
         const sessionUserJson = sessionStorage.getItem('accCurrentUser');
         if (sessionUserJson) {
             const sessionUser = JSON.parse(sessionUserJson);
-            this.currentUser = this.data.users.find(u => u.id === sessionUser.id);
-            if (this.currentUser) {
+            const fullUser = this.data.users.find(u => u.id === sessionUser.id);
+            if (fullUser) {
+                this.currentUser = fullUser;
                 this.showMainApp();
             } else {
                 this.logout();
@@ -724,24 +783,41 @@ const App = {
         }
     },
 
-    login(username, password) {
-        const user = this.data.users.find(u => u.username === username && u.password === password);
-        if (user) {
-            this.currentUser = user;
-            const rememberMe = document.getElementById('remember-me').checked;
+    async login(username, password) { // Made async
+        document.getElementById('login-error').textContent = '';
+        const user = this.data.users.find(u => u.username === username);
 
-            sessionStorage.removeItem('accCurrentUser');
-            localStorage.removeItem('accCurrentUser');
+        if (!user) {
+            document.getElementById('login-error').textContent = 'ชื่อผู้ใช้หรือรหัสผ่านไม่ถูกต้อง';
+            return;
+        }
 
-            if (rememberMe) {
-                localStorage.setItem('accCurrentUser', JSON.stringify(this.currentUser));
+        // Case 1: User has a hashed password (new system)
+        if (user.passwordHash && user.salt) {
+            const isCorrect = await this.verifyPassword(password, user.salt, user.passwordHash);
+            if (isCorrect) {
+                this.handleSuccessfulLogin(user);
             } else {
-                sessionStorage.setItem('accCurrentUser', JSON.stringify(this.currentUser));
+                document.getElementById('login-error').textContent = 'ชื่อผู้ใช้หรือรหัสผ่านไม่ถูกต้อง';
             }
+        }
+        // Case 2: User has a plain text password (old system, needs migration)
+        else if (user.password && user.password === password) {
+            console.log(`Migrating password for user: ${username}`);
+            this.showToast(`กำลังอัปเกรดความปลอดภัยบัญชีของคุณ...`, 'warning');
+            
+            // Hash the password and update the user object
+            const hashedPassword = await this.hashPassword(password);
+            user.passwordHash = hashedPassword.hash;
+            user.salt = hashedPassword.salt;
+            delete user.password; // Delete the old plain text password
+            
+            this.saveData(false); // Save the updated user data immediately
+            this.handleSuccessfulLogin(user);
 
-            this.showMainApp();
-            document.getElementById('login-error').textContent = '';
-        } else {
+        } 
+        // Case 3: Incorrect password or invalid user object
+        else {
             document.getElementById('login-error').textContent = 'ชื่อผู้ใช้หรือรหัสผ่านไม่ถูกต้อง';
         }
     },
@@ -763,7 +839,6 @@ const App = {
         document.getElementById('main-app').style.display = 'block';
         document.getElementById('user-info').textContent = `ผู้ใช้: ${this.currentUser.username} (${this.currentUser.role})`;
         
-        // Show/hide admin-only sections
         document.querySelectorAll('.admin-only').forEach(el => {
             el.style.display = this.currentUser.role === 'admin' ? '' : 'none';
         });
@@ -781,12 +856,13 @@ const App = {
         this.renderBackupPasswordStatus();
         if(this.currentUser.role === 'admin') {
             this.renderUserTable();
+            this.renderUserAccountAssignment();
         }
         
         this.toggleSection('account-section');
     },
     
-    // --- USER MANAGEMENT & PERMISSIONS ---
+    // --- USER MANAGEMENT & PERMISSIONS (UPDATED) ---
     renderUserTable() {
         const tbody = document.querySelector('#user-table tbody');
         if (!tbody) return;
@@ -844,7 +920,7 @@ const App = {
         this.renderUserAccountAssignment(user ? user.assignedAccounts : []);
     },
 
-    saveUser(e) {
+    async saveUser(e) { // Made async
         e.preventDefault();
         const id = document.getElementById('user-id').value;
         const username = document.getElementById('user-username').value.trim();
@@ -875,8 +951,15 @@ const App = {
             user.username = username;
             user.role = role;
             user.assignedAccounts = assignedAccounts;
-            if (password) { user.password = password; }
+            
+            if (password) {
+                const hashedPassword = await this.hashPassword(password);
+                user.passwordHash = hashedPassword.hash;
+                user.salt = hashedPassword.salt;
+                delete user.password; // Ensure old property is removed
+            }
             this.showToast('แก้ไขข้อมูลผู้ใช้สำเร็จ');
+
         } else { // Adding
             if (this.data.users.some(u => u.username === username)) {
                 this.showToast('ชื่อผู้ใช้นี้มีอยู่แล้ว', 'error');
@@ -884,7 +967,15 @@ const App = {
             }
             if (!password) { this.showToast('กรุณากำหนดรหัสผ่านสำหรับผู้ใช้ใหม่', 'error'); return; }
             
-            const newUser = { id: Date.now(), username, password, role, assignedAccounts };
+            const hashedPassword = await this.hashPassword(password);
+            const newUser = { 
+                id: Date.now(), 
+                username, 
+                passwordHash: hashedPassword.hash, 
+                salt: hashedPassword.salt,
+                role, 
+                assignedAccounts 
+            };
             this.data.users.push(newUser);
             this.showToast('เพิ่มผู้ใช้ใหม่สำเร็จ');
         }
@@ -916,7 +1007,7 @@ const App = {
         }
     },
 
-    // --- CRYPTO & PASSWORD FUNCTIONS ---
+    // --- CRYPTO & PASSWORD FUNCTIONS (UNCHANGED from previous version) ---
     arrayBufferToBase64(buffer) { let binary = ''; const bytes = new Uint8Array(buffer); const len = bytes.byteLength; for (let i = 0; i < len; i++) { binary += String.fromCharCode(bytes[i]); } return window.btoa(binary); },
     base64ToArrayBuffer(base64) { const binary_string = window.atob(base64); const len = binary_string.length; const bytes = new Uint8Array(len); for (let i = 0; i < len; i++) { bytes[i] = binary_string.charCodeAt(i); } return bytes.buffer; },
     async deriveKey(password, salt) { const enc = new TextEncoder(); const keyMaterial = await window.crypto.subtle.importKey('raw', enc.encode(password), { name: 'PBKDF2' }, false, ['deriveKey']); return window.crypto.subtle.deriveKey({ "name": 'PBKDF2', salt: salt, "iterations": 100000, "hash": 'SHA-256' }, keyMaterial, { "name": 'AES-GCM', "length": 256 }, true, [ "encrypt", "decrypt" ] ); },
@@ -953,7 +1044,7 @@ const App = {
         }
     },
 
-    // --- CORE APP FUNCTIONS (Adapted for Permissions) ---
+    // --- CORE APP FUNCTIONS (Unchanged from here downwards) ---
     showToast(message, type = 'success') {
         const toast = document.getElementById('toast');
         toast.textContent = message;
@@ -1011,7 +1102,6 @@ const App = {
         const accountName = prompt("กรุณากรอกชื่อบัญชีใหม่:");
         if (accountName && !this.data.accounts.includes(accountName)) {
             this.data.accounts.push(accountName);
-            // Assign the new account to the admin automatically
             const adminUser = this.data.users.find(u => u.role === 'admin');
             if(adminUser && !adminUser.assignedAccounts.includes(accountName)) {
                 adminUser.assignedAccounts.push(accountName);
@@ -1042,7 +1132,6 @@ const App = {
             accountSelect.appendChild(option);
         });
 
-        // After updating options, set the current account
         const currentIsValid = this.data.currentAccount && permittedAccounts.includes(this.data.currentAccount);
         if (currentIsValid) {
             accountSelect.value = this.data.currentAccount;
@@ -1065,11 +1154,8 @@ const App = {
             const index = this.data.accounts.indexOf(oldAccountName);
             if (index > -1) {
                 this.data.accounts[index] = newAccountName;
-                // Update in records
                 this.data.records.forEach(record => { if (record.account === oldAccountName) { record.account = newAccountName; } });
-                // Update in types
                 if (this.data.accountTypes.has(oldAccountName)) { const oldTypes = this.data.accountTypes.get(oldAccountName); this.data.accountTypes.set(newAccountName, oldTypes); this.data.accountTypes.delete(oldAccountName); }
-                // Update in user permissions
                 this.data.users.forEach(user => {
                     const accIndex = user.assignedAccounts.indexOf(oldAccountName);
                     if (accIndex > -1) {
@@ -1093,13 +1179,9 @@ const App = {
             const confirmDelete = confirm(`คุณแน่ใจว่าจะลบบัญชี "${this.data.currentAccount}" และข้อมูลทั้งหมดในบัญชีนี้หรือไม่?`);
             if (confirmDelete) {
                 const accountToDelete = this.data.currentAccount;
-                // Remove from accounts list
                 this.data.accounts = this.data.accounts.filter(acc => acc !== accountToDelete);
-                // Remove from types
                 this.data.accountTypes.delete(accountToDelete);
-                // Remove records
                 this.data.records = this.data.records.filter(rec => rec.account !== accountToDelete);
-                // Remove from user permissions
                 this.data.users.forEach(user => {
                     user.assignedAccounts = user.assignedAccounts.filter(acc => acc !== accountToDelete);
                 });
@@ -1207,9 +1289,9 @@ const App = {
                     let finalDataToMerge = null;
 
                     if (importedData && importedData.isEncrypted === true) {
-                        const password = this.data.backupPassword;
+                        const password = prompt("ไฟล์นี้ถูกเข้ารหัส กรุณากรอกรหัสผ่านเพื่อถอดรหัส:");
                         if (!password) {
-                            alert("ไฟล์นี้ถูกเข้ารหัส แต่คุณยังไม่ได้ตั้งรหัสผ่านในระบบ\n\nโปรดไปที่ 'จัดการข้อมูล' -> 'ตั้งรหัสผ่านไฟล์สำรอง' เพื่อตั้งรหัสผ่านให้ตรงกับไฟล์ก่อนนำเข้า");
+                            alert("ยกเลิกการนำเข้าไฟล์");
                             return;
                         }
                         this.showToast('กำลังถอดรหัส...', 'warning');
@@ -1218,19 +1300,26 @@ const App = {
                             finalDataToMerge = JSON.parse(decryptedString);
                             this.showToast('ถอดรหัสสำเร็จ!');
                         } else {
-                            alert("ถอดรหัสล้มเหลว! รหัสผ่านในระบบอาจไม่ตรงกับไฟล์");
+                            alert("ถอดรหัสล้มเหลว! รหัสผ่านอาจไม่ถูกต้อง");
                             return;
                         }
                     } else {
                         finalDataToMerge = importedData;
                     }
 
-                    if (finalDataToMerge.accounts && Array.isArray(finalDataToMerge.accounts)) { 
-                        if(confirm("ไฟล์นี้เป็นไฟล์สำรองข้อมูล JSON ทั้งหมด ต้องการโหลดข้อมูลทั้งหมดทับของเดิมหรือไม่?")) {
-                            this.data = { ...this.data, ...finalDataToMerge, accountTypes: new Map(finalDataToMerge.accountTypes) };
-                            this.updatePermittedAccountSelect();
-                            this.saveData();
-                            alert("โหลดข้อมูลทั้งหมดจาก JSON สำเร็จ");
+                    if (finalDataToMerge.users && Array.isArray(finalDataToMerge.users)) { 
+                        if(confirm("ไฟล์นี้เป็นไฟล์สำรองข้อมูล JSON ทั้งหมด ต้องการโหลดข้อมูลทั้งหมดทับของเดิมหรือไม่? (ข้อมูลปัจจุบันจะหายไป)")) {
+                            // Reset state and load new data
+                            this.data.users = finalDataToMerge.users || [];
+                            this.data.backupPassword = finalDataToMerge.backupPassword || null;
+                            this.data.accounts = finalDataToMerge.accounts || [];
+                            this.data.records = finalDataToMerge.records || [];
+                            this.data.accountTypes = new Map(finalDataToMerge.accountTypes || []);
+                            this.data.currentAccount = finalDataToMerge.currentAccount || (this.data.accounts.length > 0 ? this.data.accounts[0] : null);
+                            
+                            this.saveData(false); // save the new state
+                            alert("โหลดข้อมูลทั้งหมดจาก JSON สำเร็จ! กรุณาเข้าสู่ระบบอีกครั้ง");
+                            this.logout(); // Force re-login to ensure user state is correct
                         }
                     } else if (finalDataToMerge.accountName) { 
                         const confirmMsg = `ไฟล์นี้เป็นข้อมูลของบัญชี "${finalDataToMerge.accountName}"\n\nกด OK เพื่อ "แทนที่" ข้อมูลทั้งหมดของบัญชีนี้\nกด Cancel เพื่อยกเลิก`;
@@ -1254,7 +1343,7 @@ const App = {
         event.target.value = '';
     },
     
-    loadFromCsv(csvText) { let isFullBackup = false; let isFirstRow = true; let newFullAccounts = []; let newFullRecords = []; let newFullAccountTypes = new Map(); let importAccountName = ''; let importedTypes = { "รายรับ": [], "รายจ่าย": [] }; let newRecords = []; let inTypesSection = false; let inDataSection = false; let isDataHeaderRow = true; Papa.parse(csvText, { skipEmptyLines: true, step: (results) => { const rowData = results.data; const firstCell = rowData[0] || ''; if (isFirstRow) { if (firstCell === '###ALL_ACCOUNTS_BACKUP_CSV###') { isFullBackup = true; } isFirstRow = false; if(isFullBackup) return; } if (isFullBackup) { if (firstCell.startsWith('###')) { if (firstCell === '###ACCOUNTS_LIST###') newFullAccounts = rowData.slice(1).filter(Boolean); else if (firstCell === '###ACCOUNT_TYPES_START###') inTypesSection = true; else if (firstCell === '###ACCOUNT_TYPES_END###') inTypesSection = false; else if (firstCell === '###DATA_START###') { inDataSection = true; isDataHeaderRow = true; } return; } if (inTypesSection) { const accName = rowData[0]; const category = rowData[1]; const typesList = rowData.slice(2).filter(Boolean); if (!newFullAccountTypes.has(accName)) newFullAccountTypes.set(accName, { "รายรับ": [], "รายจ่าย": [] }); if ((category === 'รายรับ' || category === 'รายจ่าย') && typesList.length > 0) newFullAccountTypes.get(accName)[category].push(...typesList); } else if (inDataSection) { if (isDataHeaderRow) { isDataHeaderRow = false; return; } const [dateStr, timeStr, type, description, amountStr, recordAccount] = rowData; try { if (!dateStr || !timeStr || !type || !amountStr || !recordAccount) throw new Error("ข้อมูลไม่ครบถ้วน"); const [day, month, year] = dateStr.trim().split('/'); if(!day || !month || !year) throw new Error("รูปแบบวันที่ไม่ถูกต้อง (DD/MM/YYYY)"); const formattedDate = `${year.trim()}-${String(month.trim()).padStart(2, '0')}-${String(day.trim()).padStart(2, '0')}`; const formattedTime = timeStr.trim().replace(' น.', '').replace('.', ':'); const dateTime = `${formattedDate} ${formattedTime}`; const amount = parseFloat(String(amountStr).replace(/,/g, '')); if (isNaN(new Date(dateTime).getTime())) throw new Error(`วันที่เวลาไม่ถูกต้อง: ${dateTime}`); if (isNaN(amount)) throw new Error(`จำนวนเงินไม่ถูกต้อง: ${amountStr}`); newFullRecords.push({ dateTime, type: type.trim(), description: (description || '').trim(), amount, account: recordAccount.trim() }); } catch (e) { console.warn(`ข้ามแถวข้อมูลที่มีปัญหา (Full Backup): ${e.message}`, rowData); } } } else { if (firstCell.startsWith('###')) { if (firstCell === '###ACCOUNT_TYPES###') inTypesSection = true; else if (firstCell === '###DATA_START###') { inTypesSection = false; inDataSection = true; isDataHeaderRow = true; } return; } if (inTypesSection) { if (firstCell === 'รายรับ') importedTypes['รายรับ'] = rowData.slice(1).filter(Boolean); else if (firstCell === 'รายจ่าย') importedTypes['รายจ่าย'] = rowData.slice(1).filter(Boolean); } else if (inDataSection) { if (isDataHeaderRow) { isDataHeaderRow = false; return; } const [dateStr, timeStr, type, description, amountStr] = rowData; try { if (!dateStr || !timeStr || !type || !amountStr) throw new Error("ข้อมูลไม่ครบถ้วน"); const [day, month, year] = dateStr.trim().split('/'); if(!day || !month || !year) throw new Error("รูปแบบวันที่ไม่ถูกต้อง"); const formattedDate = `${year.trim()}-${String(month.trim()).padStart(2, '0')}-${String(day.trim()).padStart(2, '0')}`; const formattedTime = timeStr.trim().replace(' น.', '').replace('.', ':'); const dateTime = `${formattedDate} ${formattedTime}`; const amount = parseFloat(String(amountStr).replace(/,/g, '')); if (isNaN(new Date(dateTime).getTime())) throw new Error(`วันที่เวลาไม่ถูกต้อง`); if (isNaN(amount)) throw new Error(`จำนวนเงินไม่ถูกต้อง`); newRecords.push({ dateTime, type: type.trim(), description: (description || '').trim(), amount, account: importAccountName }); } catch (e) { console.warn(`ข้ามแถวข้อมูลที่มีปัญหา (Single Account): ${e.message}`, rowData); } } else { if (firstCell.startsWith('ชื่อบัญชี:')) importAccountName = firstCell.split(':')[1].trim(); } } }, complete: () => { if (isFullBackup) { if (confirm(`ไฟล์นี้เป็นไฟล์สำรองข้อมูล CSV ทั้งหมด (${newFullRecords.length} รายการ) ต้องการโหลดข้อมูลทั้งหมดทับของเดิมหรือไม่?`)) { this.data.accounts = newFullAccounts; this.data.records = newFullRecords; this.data.accountTypes = newFullAccountTypes; this.data.currentAccount = this.data.accounts.includes(this.data.currentAccount) ? this.data.currentAccount : (this.data.accounts[0] || null); this.updatePermittedAccountSelect(); this.saveData(); this.showToast("โหลดข้อมูลทั้งหมดจาก CSV สำเร็จ!"); } } else { if (!importAccountName) { alert('ไฟล์ CSV ไม่ถูกต้อง: ไม่พบชื่อบัญชีในไฟล์'); return; } const confirmMsg = `คุณต้องการ "แทนที่" ข้อมูลทั้งหมดในบัญชี "${importAccountName}" ด้วยข้อมูล ${newRecords.length} รายการจากไฟล์นี้ใช่หรือไม่?\n\nคำเตือน: ข้อมูลเดิมในบัญชีนี้จะถูกลบทั้งหมด!`; if (confirm(confirmMsg)) { if (!this.data.accounts.includes(importAccountName)) this.data.accounts.push(importAccountName); this.data.records = this.data.records.filter(r => r.account !== importAccountName); this.data.records.push(...newRecords); this.data.accountTypes.set(importAccountName, importedTypes); this.data.currentAccount = importAccountName; this.updatePermittedAccountSelect(); this.saveData(); this.showToast(`แทนที่ข้อมูลบัญชี "${importAccountName}" สำเร็จ!`); } } }, error: (err) => { this.showToast('เกิดข้อผิดพลาดในการประมวลผลไฟล์ CSV: ' + err.message, 'error'); } }); },
+    loadFromCsv(csvText) { let isFullBackup = false; let isFirstRow = true; let newFullAccounts = []; let newFullRecords = []; let newFullAccountTypes = new Map(); let importAccountName = ''; let importedTypes = { "รายรับ": [], "รายจ่าย": [] }; let newRecords = []; let inTypesSection = false; let inDataSection = false; let isDataHeaderRow = true; Papa.parse(csvText, { skipEmptyLines: true, step: (results) => { const rowData = results.data; const firstCell = rowData[0] || ''; if (isFirstRow) { if (firstCell === '###ALL_ACCOUNTS_BACKUP_CSV###') { isFullBackup = true; } isFirstRow = false; if(isFullBackup) return; } if (isFullBackup) { if (firstCell.startsWith('###')) { if (firstCell === '###ACCOUNTS_LIST###') newFullAccounts = rowData.slice(1).filter(Boolean); else if (firstCell === '###ACCOUNT_TYPES_START###') inTypesSection = true; else if (firstCell === '###ACCOUNT_TYPES_END###') inTypesSection = false; else if (firstCell === '###DATA_START###') { inDataSection = true; isDataHeaderRow = true; } return; } if (inTypesSection) { const accName = rowData[0]; const category = rowData[1]; const typesList = rowData.slice(2).filter(Boolean); if (!newFullAccountTypes.has(accName)) newFullAccountTypes.set(accName, { "รายรับ": [], "รายจ่าย": [] }); if ((category === 'รายรับ' || category === 'รายจ่าย') && typesList.length > 0) newFullAccountTypes.get(accName)[category].push(...typesList); } else if (inDataSection) { if (isDataHeaderRow) { isDataHeaderRow = false; return; } const [dateStr, timeStr, type, description, amountStr, recordAccount] = rowData; try { if (!dateStr || !timeStr || !type || !amountStr || !recordAccount) throw new Error("ข้อมูลไม่ครบถ้วน"); const [day, month, year] = dateStr.trim().split('/'); if(!day || !month || !year) throw new Error("รูปแบบวันที่ไม่ถูกต้อง (DD/MM/YYYY)"); const formattedDate = `${year.trim()}-${String(month.trim()).padStart(2, '0')}-${String(day.trim()).padStart(2, '0')}`; const formattedTime = timeStr.trim().replace(' น.', '').replace('.', ':'); const dateTime = `${formattedDate} ${formattedTime}`; const amount = parseFloat(String(amountStr).replace(/,/g, '')); if (isNaN(new Date(dateTime).getTime())) throw new Error(`วันที่เวลาไม่ถูกต้อง: ${dateTime}`); if (isNaN(amount)) throw new Error(`จำนวนเงินไม่ถูกต้อง: ${amountStr}`); newFullRecords.push({ dateTime, type: type.trim(), description: (description || '').trim(), amount, account: recordAccount.trim() }); } catch (e) { console.warn(`ข้ามแถวข้อมูลที่มีปัญหา (Full Backup): ${e.message}`, rowData); } } } else { if (firstCell.startsWith('###')) { if (firstCell === '###ACCOUNT_TYPES###') inTypesSection = true; else if (firstCell === '###DATA_START###') { inTypesSection = false; inDataSection = true; isDataHeaderRow = true; } return; } if (inTypesSection) { if (firstCell === 'รายรับ') importedTypes['รายรับ'] = rowData.slice(1).filter(Boolean); else if (firstCell === 'รายจ่าย') importedTypes['รายจ่าย'] = rowData.slice(1).filter(Boolean); } else if (inDataSection) { if (isDataHeaderRow) { isDataHeaderRow = false; return; } const [dateStr, timeStr, type, description, amountStr] = rowData; try { if (!dateStr || !timeStr || !type || !amountStr) throw new Error("ข้อมูลไม่ครบถ้วน"); const [day, month, year] = dateStr.trim().split('/'); if(!day || !month || !year) throw new Error("รูปแบบวันที่ไม่ถูกต้อง"); const formattedDate = `${year.trim()}-${String(month.trim()).padStart(2, '0')}-${String(day.trim()).padStart(2, '0')}`; const formattedTime = timeStr.trim().replace(' น.', '').replace('.', ':'); const dateTime = `${formattedDate} ${formattedTime}`; const amount = parseFloat(String(amountStr).replace(/,/g, '')); if (isNaN(new Date(dateTime).getTime())) throw new Error(`วันที่เวลาไม่ถูกต้อง`); if (isNaN(amount)) throw new Error(`จำนวนเงินไม่ถูกต้อง`); newRecords.push({ dateTime, type: type.trim(), description: (description || '').trim(), amount, account: importAccountName }); } catch (e) { console.warn(`ข้ามแถวข้อมูลที่มีปัญหา (Single Account): ${e.message}`, rowData); } } else { if (firstCell.startsWith('ชื่อบัญชี:')) importAccountName = firstCell.split(':')[1].trim(); } } }, complete: () => { if (isFullBackup) { if (confirm(`ไฟล์นี้เป็นไฟล์สำรองข้อมูล CSV ทั้งหมด (${newFullRecords.length} รายการ) ต้องการโหลดข้อมูลทั้งหมดทับของเดิมหรือไม่? (ข้อมูลปัจจุบันจะหายไป)`)) { this.data.accounts = newFullAccounts; this.data.records = newFullRecords; this.data.accountTypes = newFullAccountTypes; this.data.currentAccount = this.data.accounts.includes(this.data.currentAccount) ? this.data.currentAccount : (this.data.accounts[0] || null); this.saveData(false); alert("โหลดข้อมูลทั้งหมดจาก CSV สำเร็จ! กรุณาเข้าสู่ระบบอีกครั้ง"); this.logout(); } } else { if (!importAccountName) { alert('ไฟล์ CSV ไม่ถูกต้อง: ไม่พบชื่อบัญชีในไฟล์'); return; } const confirmMsg = `คุณต้องการ "แทนที่" ข้อมูลทั้งหมดในบัญชี "${importAccountName}" ด้วยข้อมูล ${newRecords.length} รายการจากไฟล์นี้ใช่หรือไม่?\n\nคำเตือน: ข้อมูลเดิมในบัญชีนี้จะถูกลบทั้งหมด!`; if (confirm(confirmMsg)) { if (!this.data.accounts.includes(importAccountName)) this.data.accounts.push(importAccountName); this.data.records = this.data.records.filter(r => r.account !== importAccountName); this.data.records.push(...newRecords); this.data.accountTypes.set(importAccountName, importedTypes); this.data.currentAccount = importAccountName; this.updatePermittedAccountSelect(); this.saveData(); this.showToast(`แทนที่ข้อมูลบัญชี "${importAccountName}" สำเร็จ!`); } } }, error: (err) => { this.showToast('เกิดข้อผิดพลาดในการประมวลผลไฟล์ CSV: ' + err.message, 'error'); } }); },
     
     hideInstallPrompt() { const installGuide = document.getElementById('install-guide'); if (installGuide) { installGuide.style.display = 'none'; } },
     
@@ -1265,7 +1354,6 @@ const App = {
         });
         document.getElementById('logout-btn').addEventListener('click', () => this.logout());
         
-        // User management listeners
         const userForm = document.getElementById('user-form');
         if(userForm) {
             userForm.addEventListener('submit', (e) => this.saveUser(e));
