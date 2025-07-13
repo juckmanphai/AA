@@ -228,39 +228,8 @@
     #user-account-assignment label { display: block; margin-bottom: 5px; font-weight: normal; text-align: left;}
 
     @media screen and (max-width: 768px) {
-        /* === MOBILE TABLE STYLES (CARD VIEW) === */
-        .table-container table thead {
-            display: none;
-        }
-        .table-container table tr {
-            display: block;
-            margin-bottom: 1em;
-            border: 1px solid #ddd;
-            border-radius: 8px;
-            padding: 10px;
-            background-color: #fff !important; /* Override alternating colors */
-        }
-        .table-container table td {
-            display: flex;
-            justify-content: space-between;
-            align-items: center;
-            text-align: right;
-            border: none;
-            border-bottom: 1px solid #eee;
-            padding: 10px 5px;
-        }
-        .table-container table td:last-child {
-            border-bottom: none;
-        }
-        .table-container table td::before {
-            content: attr(data-label);
-            font-weight: bold;
-            text-align: left;
-            padding-right: 15px;
-        }
-        .table-container table td[data-label="จัดการ"] {
-            gap: 10px;
-        }
+        /* This section is intentionally left blank to remove the mobile card view for tables. */
+        /* The .table-container with overflow-x: auto will now apply. */
     }
 
     @media screen and (max-width: 600px) { 
@@ -871,10 +840,10 @@ const App = {
             const assignedText = u.assignedAccounts && u.assignedAccounts.length > 0 ? u.assignedAccounts.join(', ') : 'ยังไม่ได้กำหนด';
             const tr = document.createElement('tr');
             tr.innerHTML = `
-                <td data-label="ชื่อผู้ใช้">${u.username}</td>
-                <td data-label="ประเภท">${u.role || 'user'}</td>
-                <td data-label="บัญชีที่เข้าถึงได้" style="white-space: normal;">${assignedText}</td>
-                <td data-label="จัดการ">
+                <td>${u.username}</td>
+                <td>${u.role || 'user'}</td>
+                <td style="white-space: normal;">${assignedText}</td>
+                <td>
                     <button class="edit-user-btn" data-id="${u.id}" style="background-color: var(--warning-color); padding: 5px 10px; border-radius: 10px; font-size: 14px;">แก้ไข</button>
                     ${u.role !== 'admin' ? `<button class="delete-user-btn" data-id="${u.id}" style="background-color: var(--danger-color); padding: 5px 10px; border-radius: 10px; font-size: 14px;">ลบ</button>` : ''}
                 </td>`;
@@ -1197,7 +1166,7 @@ const App = {
     },
 
     addEntry() { let entryDateInput = document.getElementById('entryDate').value.trim(); let entryTimeInput = document.getElementById('entryTime').value.trim(); const typeInput = document.getElementById('type'); const typeText = typeInput.value.trim(); const description = document.getElementById('description').value; const amount = parseFloat(document.getElementById('amount').value); let selectedDate; if (!entryDateInput) { selectedDate = new Date(); } else { if (!/^\d{1,2}\/\d{1,2}\/\d{4}$/.test(entryDateInput)) { alert("กรุณากรอกวัน/เดือน/ปี ในรูปแบบ วัน/เดือน/ปี (เช่น 10/11/2024)"); return; } const [day, month, year] = entryDateInput.split('/'); selectedDate = new Date(year, month - 1, day); } let hours, minutes; if (!entryTimeInput) { const now = new Date(); hours = String(now.getHours()).padStart(2, '0'); minutes = String(now.getMinutes()).padStart(2, '0'); } else { if (!/^\d{1,2}\.\d{2}$/.test(entryTimeInput)) { alert("กรุณากรอกเวลาในรูปแบบ HH.MM (เช่น 14.30)"); return; } [hours, minutes] = entryTimeInput.split('.'); hours = String(hours).padStart(2, '0'); minutes = String(minutes).padStart(2, '0'); } const timeString = `${hours}:${minutes}`; const formattedDate = `${selectedDate.getFullYear()}-${String(selectedDate.getMonth() + 1).padStart(2, '0')}-${String(selectedDate.getDate()).padStart(2, '0')}`; const dateTime = `${formattedDate} ${timeString}`; if (!this.data.currentAccount) { alert("กรุณาเลือกบัญชีก่อนเพิ่มรายการ"); return; } if (!typeText) { alert("กรุณากรอกประเภท"); return; } if (!description) { alert("กรุณากรอกรายละเอียด"); return; } if (isNaN(amount) || amount <= 0) { alert("กรุณากรอกจำนวนเงินที่ถูกต้อง"); return; } this.initializeAccountTypes(this.data.currentAccount); const types = this.data.accountTypes.get(this.data.currentAccount); let entryCategory = 'expense'; if (types["รายรับ"].includes(typeText)) { entryCategory = 'income'; } if (this.editingIndex !== null) { this.data.records[this.editingIndex] = { dateTime, type: typeText, description, amount, account: this.data.currentAccount }; this.editingIndex = null; } else { this.data.records.push({ dateTime, type: typeText, description, amount, account: this.data.currentAccount }); const selectedCheckboxes = document.querySelectorAll('#multiAccountCheckboxes input:checked'); selectedCheckboxes.forEach(checkbox => { const targetAccount = checkbox.value; this.data.records.push({ dateTime, type: typeText, description, amount, account: targetAccount }); }); } this.displayRecords(); document.getElementById('description').value = ''; document.getElementById('amount').value = ''; document.getElementById('entryDate').value = ''; document.getElementById('entryTime').value = ''; typeInput.value = ''; document.querySelectorAll('#multiAccountCheckboxes input:checked').forEach(checkbox => { checkbox.checked = false; }); this.saveData(); this.showToast('✓ บันทึกข้อมูลสำเร็จแล้ว', entryCategory); this.updateMultiAccountSelector(); },
-    displayRecords() { const recordBody = document.getElementById('recordBody'); recordBody.innerHTML = ""; if (!this.data.currentAccount) { recordBody.innerHTML = `<tr><td colspan="6" style="text-align: center;">กรุณาเลือกบัญชี</td></tr>`; return; } const filteredRecords = this.data.records.filter(record => record.account === this.data.currentAccount) .sort((a, b) => new Date(b.dateTime) - new Date(a.dateTime)); filteredRecords.forEach((record) => { const originalIndex = this.data.records.findIndex(r => r === record); const dateTime = new Date(record.dateTime); const formattedDate = `${String(dateTime.getDate()).padStart(2, '0')}/${String(dateTime.getMonth() + 1).padStart(2, '0')}/${dateTime.getFullYear()}`; const formattedTime = `${String(dateTime.getHours()).padStart(2, '0')}.${String(dateTime.getMinutes()).padStart(2, '0')} น.`; const row = document.createElement('tr'); row.innerHTML = ` <td data-label="วันเดือนปี">${formattedDate}</td> <td data-label="เวลา">${formattedTime}</td> <td data-label="ประเภท">${record.type}</td> <td data-label="รายละเอียด">${record.description}</td> <td data-label="จำนวนเงิน">${record.amount.toLocaleString()} บาท</td> <td data-label="การจัดการ"> <button onclick="App.editRecord(${originalIndex})">แก้ไข</button> <button onclick="App.deleteRecord(${originalIndex})">ลบ</button> </td> `; recordBody.appendChild(row); }); if (filteredRecords.length === 0) { const row = document.createElement('tr'); row.innerHTML = `<td colspan="6" style="text-align: center;">ไม่มีข้อมูลในบัญชีนี้</td>`; recordBody.appendChild(row); } },
+    displayRecords() { const recordBody = document.getElementById('recordBody'); recordBody.innerHTML = ""; if (!this.data.currentAccount) { recordBody.innerHTML = `<tr><td colspan="6" style="text-align: center;">กรุณาเลือกบัญชี</td></tr>`; return; } const filteredRecords = this.data.records.filter(record => record.account === this.data.currentAccount) .sort((a, b) => new Date(b.dateTime) - new Date(a.dateTime)); filteredRecords.forEach((record) => { const originalIndex = this.data.records.findIndex(r => r === record); const dateTime = new Date(record.dateTime); const formattedDate = `${String(dateTime.getDate()).padStart(2, '0')}/${String(dateTime.getMonth() + 1).padStart(2, '0')}/${dateTime.getFullYear()}`; const formattedTime = `${String(dateTime.getHours()).padStart(2, '0')}.${String(dateTime.getMinutes()).padStart(2, '0')} น.`; const row = document.createElement('tr'); row.innerHTML = ` <td>${formattedDate}</td> <td>${formattedTime}</td> <td>${record.type}</td> <td>${record.description}</td> <td>${record.amount.toLocaleString()} บาท</td> <td> <button onclick="App.editRecord(${originalIndex})">แก้ไข</button> <button onclick="App.deleteRecord(${originalIndex})">ลบ</button> </td> `; recordBody.appendChild(row); }); if (filteredRecords.length === 0) { const row = document.createElement('tr'); row.innerHTML = `<td colspan="6" style="text-align: center;">ไม่มีข้อมูลในบัญชีนี้</td>`; recordBody.appendChild(row); } },
     editRecord(index) { const record = this.data.records[index]; document.getElementById('type').value = record.type; document.getElementById('description').value = record.description; document.getElementById('amount').value = record.amount; const [datePart, timePart] = record.dateTime.split(' '); const [year, month, day] = datePart.split('-'); document.getElementById('entryDate').value = `${day}/${month}/${year}`; const [hours, minutes] = timePart.split(':'); document.getElementById('entryTime').value = `${hours}.${minutes}`; this.editingIndex = index; this.updateMultiAccountSelector(); document.getElementById('add-data-section').classList.add('active'); document.getElementById('add-data-section').previousElementSibling.classList.add('active'); },
     deleteRecord(index) { if (confirm("คุณแน่ใจว่าจะลบรายการนี้หรือไม่?")) { this.data.records.splice(index, 1); this.displayRecords(); this.saveData(); this.showToast('ลบข้อมูลแล้ว'); } },
     parseDateInput(dateStr) { if (!dateStr || !/^\d{1,2}\/\d{1,2}\/\d{4}$/.test(dateStr)) { return null; } const [day, month, year] = dateStr.split('/'); return new Date(year, month - 1, day); },
