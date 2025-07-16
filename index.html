@@ -221,6 +221,30 @@
               <input type="text" id="description" required>
             </div>
             
+            <!-- START: CODE ที่เพิ่มเข้ามา -->
+            <div class="entry-group" style="margin-top: 10px;">
+                <div class="section-header sub-section-header" onclick="toggleSection('import-from-account-submenu')">
+                    <span>เติมข้อมูลจากบัญชีอื่น</span>
+                    <span class="arrow">▶</span>
+                </div>
+                <div id="import-from-account-submenu" class="section-content sub-section-content">
+                    <div class="entry-form">
+                        <div class="entry-group">
+                            <label for="importAccountSelect">เลือกบัญชีต้นทาง</label>
+                            <select id="importAccountSelect"></select>
+                        </div>
+                        <div class="entry-group">
+                            <label for="importDate">เลือกวันที่ของข้อมูล</label>
+                            <input type="date" id="importDate">
+                        </div>
+                    </div>
+                    <div class="button-container" style="text-align: center; margin-top: 10px;">
+                        <button type="button" onclick="importEntriesFromAccount()" style="background-color: #673ab7;">ดึงข้อมูลมาเติม</button>
+                    </div>
+                </div>
+            </div>
+            <!-- END: CODE ที่เพิ่มเข้ามา -->
+
             <div class="entry-group" id="multiAccountSelector" style="display: none; margin-top: 10px;">
                 <div class="section-header sub-section-header" onclick="toggleSection('multi-account-submenu')">
                     <span>เพิ่มรายการนี้ในบัญชีอื่นด้วย</span>
@@ -392,7 +416,100 @@
     function toggleRecordsVisibility() { const detailsSection = document.getElementById('detailsSection'); if (detailsSection.style.display === 'none' || detailsSection.style.display === '') { detailsSection.style.display = 'block'; } else { detailsSection.style.display = 'none'; } }
     function addAccount() { const accountName = prompt("กรุณากรอกชื่อบัญชีใหม่:"); if (accountName && !accounts.includes(accountName)) { accounts.push(accountName); updateAccountSelect(); updateMultiAccountSelector(); alert("เพิ่มบัญชีสำเร็จ"); saveToLocal(); } else { alert("ชื่อบัญชีซ้ำหรือกรอกข้อมูลไม่ถูกต้อง"); } }
     function updateAccountSelect() { const accountSelect = document.getElementById('accountSelect'); accountSelect.innerHTML = '<option value="">เลือกบัญชี</option>'; accounts.forEach(account => { const option = document.createElement('option'); option.value = account; option.textContent = account; accountSelect.appendChild(option); }); }
-    function changeAccount() { currentAccount = document.getElementById('accountSelect').value; document.getElementById('accountName').textContent = currentAccount || ""; updateTypeList(); displayRecords(); updateMultiAccountSelector(); }
+    
+    // START: CODE ที่แก้ไข/เพิ่มเข้ามา
+    function changeAccount() {
+        currentAccount = document.getElementById('accountSelect').value;
+        document.getElementById('accountName').textContent = currentAccount || "";
+        updateTypeList();
+        displayRecords();
+        updateMultiAccountSelector();
+        updateImportAccountSelect(); // <-- เพิ่มการเรียกใช้ฟังก์ชันนี้
+    }
+    
+    /**
+     * อัปเดต Dropdown สำหรับเลือกบัญชีต้นทางในฟีเจอร์ "เติมข้อมูลจากบัญชีอื่น"
+     * โดยจะแสดงเฉพาะบัญชีที่ไม่ใช่บัญชีปัจจุบัน
+     */
+    function updateImportAccountSelect() {
+        const importSelect = document.getElementById('importAccountSelect');
+        const importButton = document.querySelector('#import-from-account-submenu button');
+        importSelect.innerHTML = ''; // ล้างค่าเก่า
+
+        const otherAccounts = accounts.filter(acc => acc !== currentAccount);
+
+        if (otherAccounts.length === 0 || !currentAccount) {
+            importSelect.innerHTML = '<option value="">ไม่มีบัญชีอื่นให้เลือก</option>';
+            importSelect.disabled = true;
+            if (importButton) importButton.disabled = true;
+        } else {
+            importSelect.disabled = false;
+            if (importButton) importButton.disabled = false;
+            importSelect.innerHTML = '<option value="">-- เลือกบัญชี --</option>';
+            otherAccounts.forEach(acc => {
+                const option = document.createElement('option');
+                option.value = acc;
+                option.textContent = acc;
+                importSelect.appendChild(option);
+            });
+        }
+    }
+
+    /**
+     * คัดลอกรายการทั้งหมดจากบัญชีและวันที่ที่เลือก มาใส่ในบัญชีปัจจุบัน
+     */
+    function importEntriesFromAccount() {
+        const sourceAccount = document.getElementById('importAccountSelect').value;
+        const importDateStr = document.getElementById('importDate').value;
+
+        if (!currentAccount) {
+            alert("กรุณาเลือกบัญชีปัจจุบัน (บัญชีปลายทาง) ก่อน");
+            return;
+        }
+        if (!sourceAccount) {
+            alert("กรุณาเลือกบัญชีต้นทางที่ต้องการดึงข้อมูล");
+            return;
+        }
+        if (!importDateStr) {
+            alert("กรุณาเลือกวันที่ของข้อมูลที่ต้องการดึง");
+            return;
+        }
+
+        // ค้นหารายการจากบัญชีต้นทางและวันที่ที่ระบุ
+        const recordsToImport = records.filter(record => {
+            // เช็คว่า record.dateTime (เช่น "2024-07-15 10:30") เริ่มต้นด้วย importDateStr (เช่น "2024-07-15")
+            return record.account === sourceAccount && record.dateTime.startsWith(importDateStr);
+        });
+
+        if (recordsToImport.length === 0) {
+            alert(`ไม่พบข้อมูลในบัญชี "${sourceAccount}" ของวันที่ ${importDateStr}`);
+            return;
+        }
+
+        const confirmImport = confirm(`พบ ${recordsToImport.length} รายการในบัญชี "${sourceAccount}" ของวันที่ ${importDateStr}\n\nคุณต้องการคัดลอกรายการทั้งหมดมายังบัญชี "${currentAccount}" หรือไม่?`);
+
+        if (confirmImport) {
+            let importedCount = 0;
+            recordsToImport.forEach(record => {
+                // สร้างรายการใหม่โดยใช้ข้อมูลเดิม แต่เปลี่ยน 'account' เป็นบัญชีปัจจุบัน
+                const newEntry = {
+                    dateTime: record.dateTime,
+                    type: record.type,
+                    description: record.description,
+                    amount: record.amount,
+                    account: currentAccount // กำหนดให้เป็นของบัญชีปัจจุบัน
+                };
+                records.push(newEntry);
+                importedCount++;
+            });
+
+            displayRecords(); // แสดงผลรายการที่เพิ่มเข้ามาใหม่
+            saveDataAndShowToast(); // บันทึกข้อมูล
+            alert(`คัดลอกข้อมูลสำเร็จ ${importedCount} รายการ`);
+        }
+    }
+    // END: CODE ที่แก้ไข/เพิ่มเข้ามา
+
     function editAccount() { if (!currentAccount) { alert("กรุณาเลือกบัญชีที่ต้องการแก้ไข"); return; } const newAccountName = prompt("กรุณากรอกชื่อบัญชีใหม่:", currentAccount); if (newAccountName && newAccountName !== currentAccount && !accounts.includes(newAccountName)) { const oldAccountName = currentAccount; const index = accounts.indexOf(oldAccountName); if (index > -1) { accounts[index] = newAccountName; records.forEach(record => { if (record.account === oldAccountName) { record.account = newAccountName; } }); if (accountTypes.has(oldAccountName)) { const oldTypes = accountTypes.get(oldAccountName); accountTypes.set(newAccountName, oldTypes); accountTypes.delete(oldAccountName); } currentAccount = newAccountName; updateAccountSelect(); document.getElementById('accountSelect').value = newAccountName; document.getElementById('accountName').textContent = currentAccount; displayRecords(); updateMultiAccountSelector(); alert("แก้ไขชื่อบัญชีเรียบร้อย"); saveToLocal(); } } else { alert("ชื่อบัญชีซ้ำหรือกรอกข้อมูลไม่ถูกต้อง"); } }
     function deleteAccount() { if (currentAccount) { const confirmDelete = confirm(`คุณแน่ใจว่าจะลบบัญชี "${currentAccount}" และข้อมูลทั้งหมดในบัญชีนี้หรือไม่?`); if (confirmDelete) { const accountToDelete = currentAccount; const index = accounts.indexOf(accountToDelete); if (index > -1) { accounts.splice(index, 1); } accountTypes.delete(accountToDelete); records = records.filter(rec => rec.account !== accountToDelete); currentAccount = null; document.getElementById('accountSelect').value = ""; document.getElementById('accountName').textContent = ""; updateAccountSelect(); displayRecords(); updateMultiAccountSelector(); alert("ลบบัญชีเรียบร้อย"); saveToLocal(); } } else { alert("กรุณาเลือกบัญชีที่ต้องการลบ"); } }
     
@@ -877,7 +994,7 @@
                     }
                 } else {
                     if (firstCell.startsWith('###')) { if (firstCell === '###ACCOUNT_TYPES###') inTypesSection = true; else if (firstCell === '###DATA_START###') { inTypesSection = false; inDataSection = true; isDataHeaderRow = true; } return; }
-                    if (inTypesSection) { if (firstCell === 'รายรับ') importedTypes['รายรับ'] = rowData.slice(1).filter(Boolean); else if (firstCell === 'รายจ่าย') importedTypes['รายจ่าย'] = rowData.slice(1).filter(Boolean);
+                    if (inTypesSection) { if (firstCell === 'รายรับ') importedTypes['รายรับ'] = rowData.slice(1).filter(Boolean); else if (firstCell === 'รายจ่าย') importedTypes['จ่าย'] = rowData.slice(1).filter(Boolean);
                     } else if (inDataSection) {
                         if (isDataHeaderRow) { isDataHeaderRow = false; return; } const [dateStr, timeStr, type, description, amountStr] = rowData;
                         try {
